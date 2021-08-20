@@ -1,8 +1,11 @@
 package main
 
 import (
+	"container/list"
 	"fmt"
 	"github.com/cilium/ebpf"
+	"math/rand"
+	"time"
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target bpf lruBug bpf/lru_bug.c -- -Iinclude -Os
@@ -35,7 +38,7 @@ func main() {
 
 	fmt.Println()
 	fmt.Println("###")
-	fmt.Println("First behaviour:")
+	fmt.Println("First behavior:")
 	fmt.Println("###")
 	fmt.Println()
 	test(func(lruMap *ebpf.Map) {
@@ -101,7 +104,7 @@ func main() {
 
 	fmt.Println()
 	fmt.Println("###")
-	fmt.Println("Second behaviour:")
+	fmt.Println("Second behavior:")
 	fmt.Println("###")
 	fmt.Println()
 	test(func(lruMap *ebpf.Map) {
@@ -134,7 +137,7 @@ func main() {
 
 	fmt.Println()
 	fmt.Println("###")
-	fmt.Println("Third behaviour:")
+	fmt.Println("Third behavior:")
 	fmt.Println("###")
 	fmt.Println()
 	test(func(lruMap *ebpf.Map) {
@@ -151,6 +154,10 @@ func main() {
 				fmt.Println(err)
 				return
 			} else {
+				err := lruMap.Lookup(k, &value)
+				fmt.Println(err)
+				fmt.Println(value)
+
 				// I dont know why, but the update of last element will return error (key does not exist) and iterator will be empty
 				err = lruMap.Update(k, v, ebpf.UpdateExist)
 				fmt.Println(err)
@@ -165,6 +172,58 @@ func main() {
 
 		if iterate.Err() != nil {
 			fmt.Println("iterator error", iterate.Err())
+		}
+	})
+
+	fmt.Println()
+	fmt.Println("###")
+	fmt.Println("Fourth behavior:")
+	fmt.Println("###")
+	fmt.Println()
+
+	test(func(lruMap *ebpf.Map) {
+		l := list.New()
+
+		var key uint16
+		var value uint8
+
+		i := 0
+		for i < 65535 {
+			for curr := 0; curr < 3 && i < 65535; curr++ {
+				fmt.Println("Add", i)
+				err := lruMap.Update(uint16(i), uint8(1), ebpf.UpdateNoExist)
+				if err != nil {
+					panic(err)
+				}
+				err = lruMap.Lookup(uint16(i), &value)
+				if err != nil {
+					panic(err)
+				}
+				l.PushBack(uint16(i))
+				i++
+			}
+			for y := 0; y < 3 && l.Len() > 0; y++ {
+				el := l.Front()
+				index := rand.Intn(l.Len())
+				for z := 0; z < index; z++ {
+					el = el.Next()
+				}
+				key = l.Remove(el).(uint16)
+
+				fmt.Println("Delete", key)
+
+				// here sometimes I have a unexpected behavior (even when map max entries is set to high value like 128 and more) - error key no exist (why?)
+				err := lruMap.Delete(key)
+				if err != nil {
+					fmt.Println("Can not delete", key, "from lru map:", err)
+
+					iterate := lruMap.Iterate()
+					for iterate.Next(&key, &value) {
+						fmt.Println(" ", key, "=", value)
+					}
+				}
+			}
+			time.Sleep(1 * time.Second)
 		}
 	})
 }
